@@ -570,6 +570,9 @@ if __name__ == '__main__':
     print("Bot đang khởi động ở chế độ File-Based độc lập...")
     try:
         bot.remove_webhook()
-        bot.infinity_polling()
+        # skip_pending=True tránh xử lý tin nhắn cũ dồn ứ khi bot offline
+        # timeout=10, long_polling_timeout=20 cấu hình Long Polling chuẩn để giảm tải CPU & tăng tốc phản hồi
+        bot.infinity_polling(timeout=10, long_polling_timeout=20, skip_pending=True)
     except Exception as e:
         print(f"Lỗi polling: {e}")
+
