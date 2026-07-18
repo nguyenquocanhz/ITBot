@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sepay-pg"
+version = "1.0.0"
+authors = [
+    { name = "SePay Developer", email = "developer@sepay.vn" }
+]
+description = "Official SePay Payment Gateway SDK for Python"
+readme = "README.md"
+requires-python = ">=3.7"
+keywords = ["sepay", "payment gateway", "vietqr", "vietnam", "napas", "checkout"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "requests>=2.25.0"
+]
+
+[tool.setuptools.packages.find]
+include = ["sepay_pg*"]
