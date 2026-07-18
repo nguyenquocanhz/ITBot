@@ -12,8 +12,8 @@ import html
 # Điền Token Bot của bạn tạo từ @BotFather vào đây
 BOT_TOKEN = "5552327462:AAE7gPWPzlXwn4zUQRGIp5ezoprmu9ADjkQ"
 
-# URL của website Blog & Shop (Nếu chạy local thì dùng http://localhost:8000)
-WEB_URL = "http://localhost:8000"
+# URL của website Blog & Shop (Nếu chạy local thì dùng http://127.0.0.1:8000)
+WEB_URL = "http://127.0.0.1:8000"
 
 # Khóa API bí mật kết nối Bot và Web (Phải khớp với BOT_API_KEY trong config.php)
 BOT_API_KEY = "nqatech"
