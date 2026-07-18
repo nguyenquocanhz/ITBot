@@ -8,6 +8,10 @@ import random
 import os
 import datetime
 import html
+import base64
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.fernet import Fernet
 
 # ==================== CẤU HÌNH CỬA HÀNG BOT TELEGRAM ====================
 # Điền Token Bot của bạn tạo từ @BotFather vào đây
@@ -31,34 +35,67 @@ DEFAULT_PRICE = 100000
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # Tên các file lưu trữ dữ liệu cục bộ
-ACCOUNTS_FILE = "accounts.txt"
+DAT_FILE = "accounts.dat"
 SOLD_FILE = "sold_accounts.txt"
 
+# Mật khẩu giải mã file accounts.dat (Khớp với mật khẩu trong accounts.py)
+PASSWORD = "nqatech"
+
 # Bộ nhớ tạm lưu trữ trạng thái đơn hàng của người dùng đang chat
-# Cấu trúc: { chat_id: { "category": str, "quantity": int, "order_id": int, "price": int } }
 active_orders = {}
 
-# Đảm bảo các file tồn tại
-if not os.path.exists(ACCOUNTS_FILE):
-    with open(ACCOUNTS_FILE, "w", encoding="utf-8") as f:
-        # Hạt giống tài khoản mẫu nếu file chưa được tạo
-        f.write("gpt|chatgpt_user1@gmail.com|pass123|MFA_CODE_001\n")
-        f.write("gpt|chatgpt_user2@gmail.com|pass456|MFA_CODE_002\n")
-        f.write("claude|claude_user1@gmail.com|pass789|MFA_CODE_003\n")
-        f.write("gemini|gemini_user1@gmail.com|passabc|\n")
-
+# Đảm bảo các tệp tin cơ bản tồn tại
 if not os.path.exists(SOLD_FILE):
     with open(SOLD_FILE, "w", encoding="utf-8") as f:
         pass
 
+if not os.path.exists(DAT_FILE):
+    # Khởi tạo tệp accounts.dat mẫu ban đầu
+    seed_text = (
+        "gpt|chatgpt_user1@gmail.com|pass123|MFA_CODE_001\n"
+        "gpt|chatgpt_user2@gmail.com|pass456|MFA_CODE_002\n"
+        "claude|claude_user1@gmail.com|pass789|MFA_CODE_003\n"
+        "gemini|gemini_user1@gmail.com|passabc|"
+    )
+    salt = os.urandom(16)
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(PASSWORD.encode()))
+    fernet = Fernet(key)
+    encrypted_payload = fernet.encrypt(seed_text.encode("utf-8"))
+    with open(DAT_FILE, "wb") as f:
+        f.write(salt + encrypted_payload)
+
 def read_accounts():
-    """Đọc và lọc các tài khoản khả dụng từ file accounts.txt"""
+    """Giải mã file accounts.dat và lọc các tài khoản khả dụng"""
     accounts = []
-    if not os.path.exists(ACCOUNTS_FILE):
+    if not os.path.exists(DAT_FILE):
         return accounts
     
-    with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
-        for line in f:
+    with open(DAT_FILE, "rb") as f:
+        data = f.read()
+    if len(data) < 16:
+        return accounts
+        
+    salt = data[:16]
+    encrypted_payload = data[16:]
+    
+    try:
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(PASSWORD.encode()))
+        fernet = Fernet(key)
+        decrypted_text = fernet.decrypt(encrypted_payload).decode("utf-8")
+        
+        for line in decrypted_text.split("\n"):
             line = line.strip()
             if not line:
                 continue
@@ -71,6 +108,9 @@ def read_accounts():
                     "key": parts[3] if len(parts) >= 4 else "",
                     "raw_line": line
                 })
+    except Exception as e:
+        print(f"Lỗi giải mã accounts.dat: {e}")
+        
     return accounts
 
 def get_stock_counts():
@@ -295,17 +335,27 @@ def handle_callbacks(call):
         selected_accounts = random.sample(matching_accounts, qty)
         selected_raw_lines = [acc["raw_line"] for acc in selected_accounts]
 
-        # Cập nhật lại file accounts.txt (Loại bỏ các tài khoản đã bán)
+        # Cập nhật lại file accounts.dat (Mã hóa lại và loại bỏ tài khoản đã bán)
         remaining_lines = []
-        if os.path.exists(ACCOUNTS_FILE):
-            with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    line_strip = line.strip()
-                    if line_strip and line_strip not in selected_raw_lines:
-                        remaining_lines.append(line)
+        for acc in all_accounts:
+            if acc["raw_line"] not in selected_raw_lines:
+                remaining_lines.append(acc["raw_line"])
 
-        with open(ACCOUNTS_FILE, "w", encoding="utf-8") as f:
-            f.writelines(remaining_lines)
+        # Mã hóa lại nội dung còn lại
+        updated_content = "\n".join(remaining_lines)
+        salt = os.urandom(16)
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(PASSWORD.encode()))
+        fernet = Fernet(key)
+        encrypted_payload = fernet.encrypt(updated_content.encode("utf-8"))
+        
+        with open(DAT_FILE, "wb") as f:
+            f.write(salt + encrypted_payload)
 
         # Lưu thông tin đã bán vào file sold_accounts.txt để làm lịch sử
         timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
