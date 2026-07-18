@@ -107,9 +107,9 @@ def handle_menu(message):
             # Parse thông tin tài khoản giải mã
             try:
                 acc_info = json.loads(h['account_data'])
-                acc_text = f"Email: <code>{html.escape(acc_info.get('username',''))}</code>\nPass: <code>{html.escape(acc_info.get('password',''))}</code>"
+                acc_text = f"User: <code>{html.escape(acc_info.get('username',''))}</code>\nPass: <code>{html.escape(acc_info.get('password',''))}</code>"
                 if acc_info.get('key'):
-                    acc_text += f"\nKey: <code>{html.escape(acc_info.get('key',''))}</code>"
+                    acc_text += f"\nMFA Code: <code>{html.escape(acc_info.get('key',''))}</code>"
             except:
                 acc_text = f"Thông tin: <code>{html.escape(h['account_data'])}</code>"
 
@@ -206,9 +206,9 @@ def handle_callbacks(call):
         # Giải mã tài khoản nhận được
         try:
             acc_info = json.loads(res['account_data'])
-            acc_text = f"Email/Username: <code>{html.escape(acc_info.get('username',''))}</code>\nPass: <code>{html.escape(acc_info.get('password',''))}</code>"
+            acc_text = f"User: <code>{html.escape(acc_info.get('username',''))}</code>\nPass: <code>{html.escape(acc_info.get('password',''))}</code>"
             if acc_info.get('key'):
-                acc_text += f"\nKey/Token: <code>{html.escape(acc_info.get('key',''))}</code>"
+                acc_text += f"\nMFA Code: <code>{html.escape(acc_info.get('key',''))}</code>"
         except:
             acc_text = f"Tài khoản: <code>{html.escape(res['account_data'])}</code>"
 
