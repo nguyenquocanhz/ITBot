@@ -1,44 +1,89 @@
 # -*- coding: utf-8 -*-
-# Telegram Bot bán tài khoản AI (bot.py) sử dụng pyTelegramBotAPI
-# Kết nối đồng bộ với Website thông qua cổng API bảo mật.
+# Telegram Bot bán tài khoản AI (bot.py) - Phiên bản File-Based (Không cần DB & Backend)
+# Quản lý kho qua file accounts.txt và lưu lịch sử bán qua sold_accounts.txt.
 
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-import requests
-import json
+import random
+import os
+import datetime
 import html
 
-# ==================== CẤU HÌNH BOT TELEGRAM ====================
+# ==================== CẤU HÌNH CỬA HÀNG BOT TELEGRAM ====================
 # Điền Token Bot của bạn tạo từ @BotFather vào đây
 BOT_TOKEN = "5552327462:AAE7gPWPzlXwn4zUQRGIp5ezoprmu9ADjkQ"
 
-# URL của website Blog & Shop (Nếu chạy local thì dùng http://127.0.0.1:8000)
-WEB_URL = "http://127.0.0.1:8000"
+# Cấu hình thanh toán VietQR ngân hàng của bạn
+BANK_ID = "MBBank"
+BANK_ACCOUNT_NO = "123456789"
+BANK_ACCOUNT_NAME = "NGUYEN VAN A"
 
-# Khóa API bí mật kết nối Bot và Web (Phải khớp với BOT_API_KEY trong config.php)
-BOT_API_KEY = "nqatech"
-# ===============================================================
+# Bảng giá mặc định cho từng loại tài khoản (đơn vị: VNĐ / 1 tài khoản)
+PRICE_MAP = {
+    "gpt": 150000,
+    "claude": 200000,
+    "gemini": 120000,
+    "kiro": 80000
+}
+DEFAULT_PRICE = 100000
+# ========================================================================
 
 bot = telebot.TeleBot(BOT_TOKEN)
-API_ENDPOINT = f"{WEB_URL}/api/bot.php"
-HEADERS = {"X-Bot-Key": BOT_API_KEY}
 
-def call_web_api(action, data=None):
-    """Hàm phụ gọi Web API an toàn và trả về JSON"""
-    if data is None:
-        data = {}
-    data['action'] = action
-    try:
-        response = requests.post(API_ENDPOINT, headers=HEADERS, data=data, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"success": False, "message": f"HTTP Error {response.status_code}"}
-    except Exception as e:
-        return {"success": False, "message": f"Connection failed: {str(e)}"}
+# Tên các file lưu trữ dữ liệu cục bộ
+ACCOUNTS_FILE = "accounts.txt"
+SOLD_FILE = "sold_accounts.txt"
+
+# Bộ nhớ tạm lưu trữ trạng thái đơn hàng của người dùng đang chat
+# Cấu trúc: { chat_id: { "category": str, "quantity": int, "order_id": int, "price": int } }
+active_orders = {}
+
+# Đảm bảo các file tồn tại
+if not os.path.exists(ACCOUNTS_FILE):
+    with open(ACCOUNTS_FILE, "w", encoding="utf-8") as f:
+        # Hạt giống tài khoản mẫu nếu file chưa được tạo
+        f.write("gpt|chatgpt_user1@gmail.com|pass123|MFA_CODE_001\n")
+        f.write("gpt|chatgpt_user2@gmail.com|pass456|MFA_CODE_002\n")
+        f.write("claude|claude_user1@gmail.com|pass789|MFA_CODE_003\n")
+        f.write("gemini|gemini_user1@gmail.com|passabc|\n")
+
+if not os.path.exists(SOLD_FILE):
+    with open(SOLD_FILE, "w", encoding="utf-8") as f:
+        pass
+
+def read_accounts():
+    """Đọc và lọc các tài khoản khả dụng từ file accounts.txt"""
+    accounts = []
+    if not os.path.exists(ACCOUNTS_FILE):
+        return accounts
+    
+    with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split('|')]
+            if len(parts) >= 3:
+                accounts.append({
+                    "category": parts[0].lower(),
+                    "username": parts[1],
+                    "password": parts[2],
+                    "key": parts[3] if len(parts) >= 4 else "",
+                    "raw_line": line
+                })
+    return accounts
+
+def get_stock_counts():
+    """Tính số lượng tồn kho cho từng loại tài khoản"""
+    accounts = read_accounts()
+    counts = {}
+    for acc in accounts:
+        cat = acc["category"]
+        counts[cat] = counts.get(cat, 0) + 1
+    return counts
 
 def make_main_keyboard():
-    """Tạo bàn phím chức năng chính dưới màn hình chat"""
+    """Tạo bàn phím chính ở dưới chân màn hình chat"""
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_shop = KeyboardButton("🛒 Mua tài khoản AI")
     btn_history = KeyboardButton("📁 Lịch sử mua hàng")
@@ -48,11 +93,10 @@ def make_main_keyboard():
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    """Xử lý lệnh khởi động /start hoặc trợ giúp"""
     welcome_text = (
-        "🤖 <b>Chào mừng bạn đến với Cửa hàng tài khoản AI!</b>\n\n"
-        "Cửa hàng cung cấp các tài khoản ChatGPT Plus, Claude Pro, Midjourney kích hoạt ngay lập tức.\n\n"
-        "Hãy chọn một chức năng dưới đây để bắt đầu mua hàng:"
+        "🤖 <b>Chào mừng bạn đến với Cửa hàng tài khoản AI tự động!</b>\n\n"
+        "Hệ thống bán hàng tự động bằng file lưu trữ độc lập.\n\n"
+        "Hãy chọn chức năng bên dưới để bắt đầu giao dịch:"
     )
     bot.send_message(
         message.chat.id, 
@@ -63,60 +107,74 @@ def send_welcome(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_menu(message):
-    """Xử lý các tin nhắn từ bàn phím chức năng chính"""
     text = message.text
     chat_id = message.chat.id
 
     if text == "🛒 Mua tài khoản AI":
-        # Gọi API lấy danh sách dịch vụ đang bán
-        res = call_web_api("get_services")
-        if not res.get("success"):
-            bot.send_message(chat_id, f"❌ Không thể tải danh sách dịch vụ: {res.get('message')}")
+        stock = get_stock_counts()
+        if not stock:
+            bot.send_message(chat_id, "😔 Cửa hàng hiện tại đã hết hàng. Vui lòng quay lại sau.")
             return
 
-        services = res.get("services", [])
-        if not services:
-            bot.send_message(chat_id, "😔 Cửa hàng hiện tại chưa có dịch vụ nào mở bán.")
-            return
-
-        # Tạo Inline Buttons để người dùng chọn mua
         markup = InlineKeyboardMarkup()
-        for s in services:
-            # Chỉ hiển thị nếu còn hàng hoặc hiển thị trạng thái hết hàng
-            stock_info = f"Còn {s['stock_count']}" if s['stock_count'] > 0 else "Hết hàng"
-            btn_text = f"{s['name']} ({int(s['price']):,}đ) - {stock_info}"
-            # Gửi callback data: buy_id_<service_id>
-            markup.add(InlineKeyboardButton(text=btn_text, callback_data=f"buy_id_{s['id']}"))
-
-        bot.send_message(chat_id, "👇 Chọn tài khoản AI bạn muốn mua bên dưới:", reply_markup=markup)
+        for cat, count in stock.items():
+            price = PRICE_MAP.get(cat, DEFAULT_PRICE)
+            btn_text = f"{cat.upper()} ({price:,}đ) - Còn {count} cái"
+            markup.add(InlineKeyboardButton(text=btn_text, callback_data=f"select_cat_{cat}"))
+        
+        bot.send_message(chat_id, "👇 Chọn loại tài khoản AI bạn muốn mua:", reply_markup=markup)
 
     elif text == "📁 Lịch sử mua hàng":
-        # Tra cứu các tài khoản đã mua thành công dựa trên Telegram ID
-        res = call_web_api("get_history", {"telegram_id": chat_id})
-        if not res.get("success"):
-            bot.send_message(chat_id, f"❌ Lỗi tra cứu: {res.get('message')}")
-            return
+        # Tra cứu từ file sold_accounts.txt các đơn hàng có telegram_id trùng khớp
+        history = []
+        if os.path.exists(SOLD_FILE):
+            with open(SOLD_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = [p.strip() for p in line.split('|')]
+                    # Định dạng lưu: timestamp|telegram_id|order_id|category|quantity|price|username|password|key
+                    if len(parts) >= 8 and parts[1] == str(chat_id):
+                        history.append(parts)
 
-        history = res.get("history", [])
         if not history:
-            bot.send_message(chat_id, "📦 Bạn chưa mua tài khoản nào. Hãy click '🛒 Mua tài khoản AI' để ủng hộ shop nhé!")
+            bot.send_message(chat_id, "📦 Bạn chưa mua tài khoản nào tại đây.")
             return
 
-        bot.send_message(chat_id, f"📅 <b>Lịch sử mua hàng của bạn ({len(history)} đơn):</b>", parse_mode="HTML")
+        bot.send_message(chat_id, f"📅 <b>Lịch sử mua hàng của bạn ({len(history)} tài khoản):</b>", parse_mode="HTML")
+        
+        # Nhóm theo order_id để hiển thị gọn gàng
+        orders_grouped = {}
         for h in history:
-            # Parse thông tin tài khoản giải mã
-            try:
-                acc_info = json.loads(h['account_data'])
-                acc_text = f"User: <code>{html.escape(acc_info.get('username',''))}</code>\nPass: <code>{html.escape(acc_info.get('password',''))}</code>"
-                if acc_info.get('key'):
-                    acc_text += f"\nMFA Code: <code>{html.escape(acc_info.get('key',''))}</code>"
-            except:
-                acc_text = f"Thông tin: <code>{html.escape(h['account_data'])}</code>"
+            # timestamp, telegram_id, order_id, category, quantity, price, username, password, key
+            o_id = h[2]
+            if o_id not in orders_grouped:
+                orders_grouped[o_id] = {
+                    "time": h[0],
+                    "category": h[3],
+                    "price": int(h[5]),
+                    "accounts": []
+                }
+            orders_grouped[o_id]["accounts"].append({
+                "username": h[6],
+                "password": h[7],
+                "key": h[8] if len(h) >= 9 else ""
+            })
+
+        for o_id, o_data in orders_grouped.items():
+            acc_list_text = ""
+            for idx, acc in enumerate(o_data["accounts"], 1):
+                acc_list_text += f" {idx}. User: <code>{html.escape(acc['username'])}</code> | Pass: <code>{html.escape(acc['password'])}</code>"
+                if acc["key"]:
+                    acc_list_text += f" | MFA Code: <code>{html.escape(acc['key'])}</code>"
+                acc_list_text += "\n"
 
             msg = (
-                f"🏷️ <b>Dịch vụ</b>: {html.escape(h['service_name'])}\n"
-                f"💰 <b>Giá mua</b>: {int(h['price']):,}đ\n"
-                f"🔑 <b>Tài khoản bàn giao</b>:\n{acc_text}\n"
+                f"🛍️ <b>Đơn hàng #{o_id}</b> ({o_data['time']})\n"
+                f"🏷️ <b>Dịch vụ</b>: {o_data['category'].upper()}\n"
+                f"💰 <b>Tổng thanh toán</b>: {o_data['price']:,}đ\n"
+                f"🔑 <b>Tài khoản nhận được:</b>\n{acc_list_text}"
                 f"---"
             )
             bot.send_message(chat_id, msg, parse_mode="HTML")
@@ -124,56 +182,78 @@ def handle_menu(message):
     elif text == "ℹ️ Trợ giúp":
         help_msg = (
             "⚙️ <b>Hướng dẫn mua hàng:</b>\n"
-            "1. Bấm <b>Mua tài khoản AI</b> dưới menu.\n"
-            "2. Chọn loại tài khoản cần mua.\n"
-            "3. Quét mã QR chuyển khoản và sao chép đúng nội dung chuyển khoản.\n"
-            "4. Chọn <b>Mô phỏng thanh toán (Test)</b> để nhận ngay tài khoản tức thì mà không cần thanh toán tiền thật khi thử nghiệm.\n\n"
-            "💬 Liên hệ hỗ trợ trực tuyến: @admin_username"
+            "1. Chọn <b>Mua tài khoản AI</b> ở menu.\n"
+            "2. Chọn loại tài khoản và số lượng.\n"
+            "3. Chuyển khoản VietQR và click <b>Mô phỏng thanh toán (Test)</b> để nhận tài khoản ngay lập tức.\n\n"
+            "💬 Admin hỗ trợ: @admin_username"
         )
         bot.send_message(chat_id, help_msg, parse_mode="HTML")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
-    """Xử lý các tương tác nút bấm Inline Keyboard"""
     chat_id = call.message.chat.id
     callback_data = call.data
 
-    # A. Xử lý đặt hàng: buy_id_<service_id>
-    if callback_data.startswith("buy_id_"):
-        service_id = int(callback_data.replace("buy_id_", ""))
-        first_name = call.from_user.first_name or "Telegram User"
-        username = call.from_user.username or ""
-        telegram_name = f"{first_name} (@{username})" if username else first_name
-
-        # Tạo đơn hàng
-        res = call_web_api("create_order", {
-            "telegram_id": chat_id,
-            "telegram_name": telegram_name,
-            "service_id": service_id
-        })
-
-        if not res.get("success"):
-            if res.get("message") == "out_of_stock":
-                bot.answer_callback_query(call.id, "❌ Dịch vụ này đã hết hàng trong kho!", show_alert=True)
-            else:
-                bot.answer_callback_query(call.id, f"❌ Lỗi: {res.get('message')}", show_alert=True)
+    # A. Chọn Loại tài khoản -> Chọn số lượng
+    if callback_data.startswith("select_cat_"):
+        cat = callback_data.replace("select_cat_", "")
+        
+        stock = get_stock_counts()
+        count = stock.get(cat, 0)
+        
+        if count == 0:
+            bot.answer_callback_query(call.id, "❌ Loại tài khoản này hiện đã hết hàng!", show_alert=True)
             return
 
-        order_id = res['order_id']
-        price = res['price']
-        qr_url = res['qr_url']
-        memo = res['memo']
-
-        # Xóa tin nhắn chọn dịch vụ cũ đi để gọn giao diện
         bot.delete_message(chat_id, call.message.message_id)
 
-        # Gửi thông tin thanh toán kèm ảnh QR VietQR
+        # Inline button chọn nhanh số lượng
+        markup = InlineKeyboardMarkup()
+        # Chỉ hiển thị các lựa chọn số lượng phù hợp với số lượng còn trong kho
+        for q in [1, 2, 3, 5]:
+            if q <= count:
+                markup.add(InlineKeyboardButton(text=f"Mua {q} tài khoản", callback_data=f"order_{cat}_{q}"))
+        
+        bot.send_message(chat_id, f"Chọn số lượng bạn muốn mua cho <b>{cat.upper()}</b>:", parse_mode="HTML", reply_markup=markup)
+
+    # B. Đặt hàng: order_<category>_<quantity>
+    elif callback_data.startswith("order_"):
+        parts = callback_data.split("_")
+        cat = parts[1]
+        qty = int(parts[2])
+
+        stock = get_stock_counts()
+        count = stock.get(cat, 0)
+
+        if qty > count:
+            bot.answer_callback_query(call.id, f"❌ Kho hàng chỉ còn {count} tài khoản!", show_alert=True)
+            return
+
+        price_per_acc = PRICE_MAP.get(cat, DEFAULT_PRICE)
+        total_price = price_per_acc * qty
+        order_id = random.randint(100000, 999999)
+
+        # Lưu đơn hàng tạm thời vào bộ nhớ
+        active_orders[chat_id] = {
+            "category": cat,
+            "quantity": qty,
+            "order_id": order_id,
+            "price": total_price
+        }
+
+        bot.delete_message(chat_id, call.message.message_id)
+
+        # Sinh mã QR VietQR thanh toán
+        memo = f"ITBLOG PAY {order_id}"
+        qr_url = f"https://img.vietqr.io/image/{BANK_ID}-{BANK_ACCOUNT_NO}-compact2.jpg?amount={total_price}&addInfo={memo}&accountName={BANK_ACCOUNT_NAME}"
+
         msg = (
             f"🛒 <b>Đơn hàng #{order_id} chờ thanh toán!</b>\n"
-            f"📦 <b>Dịch vụ</b>: {html.escape(res['service_name'])}\n"
-            f"💰 <b>Số tiền cần trả</b>: <code>{int(price):,}đ</code>\n"
-            f"🔤 <b>Nội dung chuyển khoản bắt buộc</b>: <code>{html.escape(memo)}</code>\n\n"
-            f"👉 Vui lòng quét mã QR chuyển khoản dưới đây. Hệ thống sẽ bàn giao tài khoản ngay sau khi thanh toán thành công."
+            f"📦 <b>Dịch vụ</b>: {cat.upper()}\n"
+            f"🔢 <b>Số lượng</b>: {qty} tài khoản\n"
+            f"💰 <b>Tổng số tiền</b>: <code>{total_price:,}đ</code>\n"
+            f"🔤 <b>Nội dung chuyển khoản bắt buộc</b>: <code>{memo}</code>\n\n"
+            f"👉 Vui lòng quét mã QR thanh toán bên dưới. Sau đó nhấn nút 'Mô phỏng thanh toán' để nhận tài khoản ngay lập tức."
         )
 
         markup = InlineKeyboardMarkup()
@@ -184,72 +264,98 @@ def handle_callbacks(call):
         markup.add(btn_simulate)
         markup.add(btn_cancel)
 
-        # Gửi QR và tin nhắn thanh toán
         bot.send_photo(chat_id, qr_url, caption=msg, parse_mode="HTML", reply_markup=markup)
 
-    # B. Xử lý giả lập thanh toán: simulate_<order_id>
+    # C. Mô phỏng thanh toán thành công -> Lấy ngẫu nhiên tài khoản và cập nhật file
     elif callback_data.startswith("simulate_"):
         order_id = int(callback_data.replace("simulate_", ""))
         
-        # Báo hiệu đang xử lý
-        bot.answer_callback_query(call.id, "🔄 Đang kiểm tra thanh toán...")
-
-        res = call_web_api("complete_order", {"order_id": order_id})
-        
-        if not res.get("success"):
-            if res.get("message") == "out_of_stock":
-                bot.send_message(chat_id, "❌ Rất tiếc, kho hàng đã hết tài khoản khả dụng. Đơn hàng tự động hủy.")
-            else:
-                bot.send_message(chat_id, f"❌ Cấp phát tài khoản thất bại: {res.get('message')}")
+        # Kiểm tra đơn hàng có tồn tại trong bộ nhớ tạm
+        order = active_orders.get(chat_id)
+        if not order or order["order_id"] != order_id:
+            bot.answer_callback_query(call.id, "❌ Đơn hàng không tồn tại hoặc đã bị hết hạn.", show_alert=True)
             return
 
-        # Giải mã tài khoản nhận được
-        try:
-            acc_info = json.loads(res['account_data'])
-            acc_text = f"User: <code>{html.escape(acc_info.get('username',''))}</code>\nPass: <code>{html.escape(acc_info.get('password',''))}</code>"
-            if acc_info.get('key'):
-                acc_text += f"\nMFA Code: <code>{html.escape(acc_info.get('key',''))}</code>"
-        except:
-            acc_text = f"Tài khoản: <code>{html.escape(res['account_data'])}</code>"
+        bot.answer_callback_query(call.id, "🔄 Đang xử lý cấp tài khoản...")
 
-        # Cập nhật giao diện xóa ảnh QR đi
+        cat = order["category"]
+        qty = order["quantity"]
+
+        # Đọc toàn bộ tài khoản
+        all_accounts = read_accounts()
+        # Lọc các tài khoản thuộc danh mục được chọn
+        matching_accounts = [acc for acc in all_accounts if acc["category"] == cat]
+
+        if len(matching_accounts) < qty:
+            bot.send_message(chat_id, "❌ Rất tiếc, kho hàng vừa hết tài khoản khả dụng. Giao dịch đã bị hủy.")
+            active_orders.pop(chat_id, None)
+            return
+
+        # Lấy ngẫu nhiên tài khoản theo số lượng cần mua
+        selected_accounts = random.sample(matching_accounts, qty)
+        selected_raw_lines = [acc["raw_line"] for acc in selected_accounts]
+
+        # Cập nhật lại file accounts.txt (Loại bỏ các tài khoản đã bán)
+        remaining_lines = []
+        if os.path.exists(ACCOUNTS_FILE):
+            with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line_strip = line.strip()
+                    if line_strip and line_strip not in selected_raw_lines:
+                        remaining_lines.append(line)
+
+        with open(ACCOUNTS_FILE, "w", encoding="utf-8") as f:
+            f.writelines(remaining_lines)
+
+        # Lưu thông tin đã bán vào file sold_accounts.txt để làm lịch sử
+        timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+        with open(SOLD_FILE, "a", encoding="utf-8") as f:
+            for acc in selected_accounts:
+                # Định dạng: timestamp|telegram_id|order_id|category|quantity|price|username|password|key
+                f.write(f"{timestamp}|{chat_id}|{order_id}|{cat}|{qty}|{order['price']}|{acc['username']}|{acc['password']}|{acc['key']}\n")
+
+        # Tạo văn bản tài khoản bàn giao cho khách
+        acc_text = ""
+        for idx, acc in enumerate(selected_accounts, 1):
+            acc_text += f" {idx}. User: <code>{html.escape(acc['username'])}</code> | Pass: <code>{html.escape(acc['password'])}</code>"
+            if acc["key"]:
+                acc_text += f" | MFA Code: <code>{html.escape(acc['key'])}</code>"
+            acc_text += "\n"
+
         bot.delete_message(chat_id, call.message.message_id)
 
         success_msg = (
             f"🎉 <b>THANH TOÁN THÀNH CÔNG!</b>\n\n"
-            f"🔑 <b>Thông tin tài khoản AI của bạn:</b>\n"
-            f"{acc_text}\n\n"
-            f"Lưu ý: Bạn có thể xem lại tài khoản đã mua bất kỳ lúc nào tại nút <b>📁 Lịch sử mua hàng</b>."
+            f"🔑 <b>Tài khoản AI của bạn:</b>\n"
+            f"{acc_text}\n"
+            f"Lưu ý: Bạn có thể xem lại tài khoản bất kỳ lúc nào qua nút <b>📁 Lịch sử mua hàng</b>."
         )
         bot.send_message(chat_id, success_msg, parse_mode="HTML")
 
-    # C. Xác nhận chuyển khoản: confirm_<order_id>
-    elif callback_data.startswith("confirm_"):
-        order_id = int(callback_data.replace("confirm_", ""))
-        bot.answer_callback_query(call.id, "Ghi nhận giao dịch chuyển khoản")
-        
-        bot.delete_message(chat_id, call.message.message_id)
-        
-        bot.send_message(
-            chat_id,
-            f"✅ <b>Đã gửi yêu cầu phê duyệt đơn hàng #{order_id}!</b>\n\n"
-            f"Admin sẽ kiểm tra biến động số dư tài khoản ngân hàng và duyệt đơn cấp tài khoản cho bạn sớm nhất (thường là 5-15 phút).",
-            parse_mode="HTML"
-        )
+        # Xóa khỏi hàng đợi đơn hàng
+        active_orders.pop(chat_id, None)
 
-    # D. Hủy đơn hàng: cancel_<order_id>
+    # D. Hủy đơn hàng
     elif callback_data.startswith("cancel_"):
-        order_id = int(callback_data.replace("cancel_", ""))
-        call_web_api("cancel_order", {"order_id": order_id})
-        
-        bot.answer_callback_query(call.id, "Đã hủy đơn hàng")
         bot.delete_message(chat_id, call.message.message_id)
         bot.send_message(chat_id, "❌ Đơn hàng của bạn đã được hủy bỏ thành công.")
+        active_orders.pop(chat_id, None)
+
+    # E. Xác nhận chuyển khoản
+    elif callback_data.startswith("confirm_"):
+        order_id = int(callback_data.replace("confirm_", ""))
+        bot.answer_callback_query(call.id, "Ghi nhận thanh toán")
+        bot.delete_message(chat_id, call.message.message_id)
+        bot.send_message(
+            chat_id,
+            f"✅ <b>Đã gửi yêu cầu kiểm tra giao dịch #{order_id}!</b>\n\n"
+            f"Admin sẽ đối soát chuyển khoản ngân hàng và gửi tài khoản qua tin nhắn sớm nhất."
+        )
+        active_orders.pop(chat_id, None)
 
 if __name__ == '__main__':
-    print("Bot đang khởi động...")
+    print("Bot đang khởi động ở chế độ File-Based độc lập...")
     try:
-        # Xóa Webhook cũ để tránh lỗi Conflict 409 khi chạy Long Polling
         bot.remove_webhook()
         bot.infinity_polling()
     except Exception as e:
