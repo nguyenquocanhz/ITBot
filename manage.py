@@ -244,6 +244,146 @@ def import_from_txt():
     print("\nẤn phím bất kỳ để quay lại menu...")
     msvcrt.getch()
 
+def show_pivot_analysis():
+    clear_screen()
+    draw_header()
+    
+    if not os.path.exists(SOLD_FILE) or os.path.getsize(SOLD_FILE) == 0:
+        print(COLOR_YELLOW + "📭 Chưa có lịch sử bán hàng để phân tích doanh thu." + COLOR_RESET)
+        print("\nẤn phím bất kỳ để quay lại menu...")
+        msvcrt.getch()
+        return
+
+    # Phân tích dữ liệu từ file
+    orders_seen = set()
+    sales_data = [] # List of dict: { "date": DD/MM, "category": str, "revenue": int }
+    
+    total_sales = 0
+    total_accounts_sold = 0
+    
+    with open(SOLD_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|")
+            if len(parts) >= 8:
+                # parts: timestamp|telegram_id|order_id|category|quantity|price|username|password|key
+                order_id = parts[2].strip()
+                category = parts[3].strip().upper()
+                price = int(parts[5].strip())
+                timestamp = parts[0].strip()
+                
+                # Trích xuất DD/MM từ timestamp (dd/mm/yyyy hh:mm)
+                try:
+                    date_part = timestamp.split(" ")[0] # dd/mm/yyyy
+                    date_dm = "/".join(date_part.split("/")[:2]) # dd/mm
+                except Exception:
+                    date_dm = "N/A"
+                
+                total_accounts_sold += 1
+                
+                if order_id not in orders_seen:
+                    orders_seen.add(order_id)
+                    total_sales += price
+                    sales_data.append({
+                        "order_id": order_id,
+                        "date": date_dm,
+                        "category": category,
+                        "revenue": price
+                    })
+
+    print(f" 📈 {COLOR_BOLD}TỔNG QUAN DOANH THU:{COLOR_RESET}")
+    print(f"   • Tổng số đơn hàng: {COLOR_GREEN}{len(orders_seen)}{COLOR_RESET}")
+    print(f"   • Tổng số tài khoản đã bán: {COLOR_GREEN}{total_accounts_sold}{COLOR_RESET}")
+    print(f"   • Tổng doanh thu đạt được: {COLOR_CYAN}{total_sales:,}đ{COLOR_RESET}\n")
+
+    # Xây dựng bảng Pivot (Hàng = Dịch vụ, Cột = Ngày)
+    categories = sorted(list(set(item["category"] for item in sales_data)))
+    dates = sorted(list(set(item["date"] for item in sales_data)))
+    
+    # Để bảng không quá rộng làm vỡ màn hình console, ta lấy tối đa 5 ngày gần nhất
+    if len(dates) > 5:
+        dates = dates[-5:]
+
+    # Khởi tạo ma trận pivot
+    pivot = {cat: {date: 0 for date in dates} for cat in categories}
+    for item in sales_data:
+        cat = item["category"]
+        dt = item["date"]
+        if dt in pivot[cat]: # Chỉ tính nếu thuộc 5 ngày gần nhất được lọc
+            pivot[cat][dt] += item["revenue"]
+
+    # In bảng Pivot
+    print(COLOR_CYAN + COLOR_BOLD + " 📊 BẢNG PHÂN TÍCH DOANH THU PIVOT (DỊCH VỤ vs NGÀY)" + COLOR_RESET)
+    
+    # Chiều rộng cột
+    col_srv_width = 12
+    col_date_width = 12
+    col_total_width = 14
+    
+    # Đường kẻ viền ngang
+    def print_border(left, mid, right):
+        border = left + "─" * col_srv_width
+        for _ in dates:
+            border += mid + "─" * col_date_width
+        border += mid + "─" * col_total_width + right
+        print(border)
+
+    # 1. Đường biên trên cùng
+    print_border(" ┌", "┬", "┐")
+    
+    # 2. Hàng tiêu đề cột
+    header_str = f" │ {'Dịch vụ':<{col_srv_width - 2}}"
+    for dt in dates:
+        header_str += f" │ {dt:^{col_date_width - 2}}"
+    header_str += f" │ {'Tổng phụ':^{col_total_width - 2}} │"
+    print(header_str)
+    
+    # 3. Đường chia tiêu đề
+    print_border(" ├", "┼", "┤")
+
+    # 4. Hàng dữ liệu
+    col_totals = {dt: 0 for dt in dates}
+    grand_total = 0
+    
+    for cat in categories:
+        row_str = f" │ {cat:<{col_srv_width - 2}}"
+        row_total = 0
+        for dt in dates:
+            val = pivot[cat][dt]
+            row_total += val
+            col_totals[dt] += val
+            val_str = f"{val:,}đ" if val > 0 else "-"
+            padded_val = f"{val_str:>{col_date_width - 2}}"
+            row_str += f" │ {padded_val}"
+        grand_total += row_total
+        row_total_str = f"{row_total:,}đ"
+        padded_row_total = f"{row_total_str:>{col_total_width - 2}}"
+        row_str += f" │ {COLOR_GREEN}{padded_row_total}{COLOR_RESET} │"
+        print(row_str)
+
+    # 5. Đường chia tổng cộng
+    print_border(" ├", "┼", "┤")
+
+    # 6. Hàng tổng cộng
+    total_row_str = f" │ {'TỔNG CỘNG':<{col_srv_width - 2}}"
+    for dt in dates:
+        val = col_totals[dt]
+        val_str = f"{val:,}đ" if val > 0 else "-"
+        padded_val = f"{val_str:>{col_date_width - 2}}"
+        total_row_str += f" │ {COLOR_CYAN}{padded_val}{COLOR_RESET}"
+    grand_total_str = f"{grand_total:,}đ"
+    padded_grand_total = f"{grand_total_str:>{col_total_width - 2}}"
+    total_row_str += f" │ {COLOR_GREEN}{COLOR_BOLD}{padded_grand_total}{COLOR_RESET} │"
+    print(total_row_str)
+
+    # 7. Đường biên dưới cùng
+    print_border(" └", "┴", "┘")
+
+    print("\nẤn phím bất kỳ để quay lại menu...")
+    msvcrt.getch()
+
 def view_sales_history():
     clear_screen()
     draw_header()
@@ -307,9 +447,10 @@ def main():
         "1. Xem chi tiết kho hàng tài khoản",
         "2. Nhập thêm tài khoản thủ công (Nhập tay)",
         "3. Nhập tự động từ file khotaikhoan.txt",
-        "4. Xem lịch sử bán hàng (Đơn hàng đã giao)",
-        "5. Khởi động Telegram Bot (Mở console riêng)",
-        "6. Thoát chương trình"
+        "4. Báo cáo Doanh thu & Phân tích Pivot",
+        "5. Xem lịch sử bán hàng (Đơn hàng đã giao)",
+        "6. Khởi động Telegram Bot (Mở console riêng)",
+        "7. Thoát chương trình"
     ]
     
     selected_idx = 0
@@ -331,10 +472,12 @@ def main():
             elif selected_idx == 2:
                 import_from_txt()
             elif selected_idx == 3:
-                view_sales_history()
+                show_pivot_analysis()
             elif selected_idx == 4:
-                launch_bot()
+                view_sales_history()
             elif selected_idx == 5:
+                launch_bot()
+            elif selected_idx == 6:
                 clear_screen()
                 print("Tạm biệt!")
                 break
