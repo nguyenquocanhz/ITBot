@@ -113,6 +113,35 @@ def read_accounts():
         
     return accounts
 
+def get_totp_code(secret: str) -> str:
+    """Tự động sinh mã OTP 6 số từ khóa bí mật TOTP (Base32)"""
+    try:
+        import base64
+        import hashlib
+        import hmac
+        import time
+        
+        secret = secret.replace(" ", "").upper()
+        missing_padding = len(secret) % 8
+        if missing_padding:
+            secret += '=' * (8 - missing_padding)
+            
+        key = base64.b32decode(secret, casefold=True)
+        intervals_no = int(time.time() // 30)
+        msg = intervals_no.to_bytes(8, byteorder='big')
+        
+        hmac_result = hmac.new(key, msg, hashlib.sha1).digest()
+        offset = hmac_result[-1] & 0x0f
+        bin_code = ((hmac_result[offset] & 0x7f) << 24 |
+                    (hmac_result[offset+1] & 0xff) << 16 |
+                    (hmac_result[offset+2] & 0xff) << 8 |
+                    (hmac_result[offset+3] & 0xff))
+        
+        code = bin_code % 1000000
+        return f"{code:06d}"
+    except Exception:
+        return None
+
 def get_stock_counts():
     """Tính số lượng tồn kho cho từng loại tài khoản"""
     accounts = read_accounts()
@@ -208,6 +237,9 @@ def handle_menu(message):
                 acc_list_text += f" {idx}. User: <code>{html.escape(acc['username'])}</code> | Pass: <code>{html.escape(acc['password'])}</code>"
                 if acc["key"]:
                     acc_list_text += f" | MFA Code: <code>{html.escape(acc['key'])}</code>"
+                    otp = get_totp_code(acc['key'])
+                    if otp:
+                        acc_list_text += f" (OTP: <code>{otp}</code>)"
                 acc_list_text += "\n"
 
             msg = (
@@ -370,6 +402,9 @@ def handle_callbacks(call):
             acc_text += f" {idx}. User: <code>{html.escape(acc['username'])}</code> | Pass: <code>{html.escape(acc['password'])}</code>"
             if acc["key"]:
                 acc_text += f" | MFA Code: <code>{html.escape(acc['key'])}</code>"
+                otp = get_totp_code(acc['key'])
+                if otp:
+                    acc_text += f" (OTP: <code>{otp}</code>)"
             acc_text += "\n"
 
         bot.delete_message(chat_id, call.message.message_id)

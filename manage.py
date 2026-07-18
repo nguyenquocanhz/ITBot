@@ -29,6 +29,35 @@ COLOR_RED = "\033[91m"
 COLOR_CYAN = "\033[96m"
 COLOR_REVERSE = "\033[7m"
 
+def get_totp_code(secret: str) -> str:
+    """Tự động sinh mã OTP 6 số từ khóa bí mật TOTP (Base32)"""
+    try:
+        import base64
+        import hashlib
+        import hmac
+        import time
+        
+        secret = secret.replace(" ", "").upper()
+        missing_padding = len(secret) % 8
+        if missing_padding:
+            secret += '=' * (8 - missing_padding)
+            
+        key = base64.b32decode(secret, casefold=True)
+        intervals_no = int(time.time() // 30)
+        msg = intervals_no.to_bytes(8, byteorder='big')
+        
+        hmac_result = hmac.new(key, msg, hashlib.sha1).digest()
+        offset = hmac_result[-1] & 0x0f
+        bin_code = ((hmac_result[offset] & 0x7f) << 24 |
+                    (hmac_result[offset+1] & 0xff) << 16 |
+                    (hmac_result[offset+2] & 0xff) << 8 |
+                    (hmac_result[offset+3] & 0xff))
+        
+        code = bin_code % 1000000
+        return f"{code:06d}"
+    except Exception:
+        return None
+
 def clear_screen():
     os.system('cls')
 
@@ -135,7 +164,12 @@ def show_all_accounts():
             parts = line.split("|")
             if len(parts) >= 3:
                 mfa = parts[3] if len(parts) >= 4 else ""
-                print(f" {COLOR_CYAN}{idx:02d}.{COLOR_RESET} [{COLOR_GREEN}{parts[0].upper()}{COLOR_RESET}] User: {parts[1]} | Pass: {parts[2]}" + (f" | MFA: {mfa}" if mfa else ""))
+                otp_text = ""
+                if mfa:
+                    otp = get_totp_code(mfa)
+                    if otp:
+                        otp_text = f" (OTP: {COLOR_YELLOW}{otp}{COLOR_RESET})"
+                print(f" {COLOR_CYAN}{idx:02d}.{COLOR_RESET} [{COLOR_GREEN}{parts[0].upper()}{COLOR_RESET}] User: {parts[1]} | Pass: {parts[2]}" + (f" | MFA: {mfa}" if mfa else "") + otp_text)
     
     print("\nẤn phím bất kỳ để quay lại menu...")
     msvcrt.getch()
@@ -226,8 +260,13 @@ def view_sales_history():
                 # format: timestamp|telegram_id|order_id|category|quantity|price|username|password|key
                 if len(parts) >= 8:
                     mfa = parts[8] if len(parts) >= 9 else ""
+                    otp_text = ""
+                    if mfa:
+                        otp = get_totp_code(mfa)
+                        if otp:
+                            otp_text = f" (OTP: {COLOR_YELLOW}{otp}{COLOR_RESET})"
                     print(f" 📅 [{parts[0]}] ĐH #{parts[2]} | Khách: {parts[1]}")
-                    print(f"    ↳ [{parts[3].upper()}] User: {parts[6]} | Pass: {parts[7]}" + (f" | MFA: {mfa}" if mfa else ""))
+                    print(f"    ↳ [{parts[3].upper()}] User: {parts[6]} | Pass: {parts[7]}" + (f" | MFA: {mfa}" if mfa else "") + otp_text)
                     print("-" * 55)
                     
     print("\nẤn phím bất kỳ để quay lại menu...")
