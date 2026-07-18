@@ -142,6 +142,127 @@ def get_totp_code(secret: str) -> str:
     except Exception:
         return None
 
+def get_pivot_analysis_text() -> str:
+    """Tự động phân tích lịch sử bán hàng và trả về bảng Pivot dạng văn bản định dạng đẹp"""
+    if not os.path.exists(SOLD_FILE) or os.path.getsize(SOLD_FILE) == 0:
+        return "📭 Chưa có lịch sử bán hàng để phân tích doanh thu."
+        
+    orders_seen = set()
+    sales_data = []
+    total_sales = 0
+    total_accounts_sold = 0
+    
+    with open(SOLD_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|")
+            if len(parts) >= 8:
+                order_id = parts[2].strip()
+                category = parts[3].strip().upper()
+                price = int(parts[5].strip())
+                timestamp = parts[0].strip()
+                
+                try:
+                    date_part = timestamp.split(" ")[0]
+                    date_dm = "/".join(date_part.split("/")[:2])
+                except Exception:
+                    date_dm = "N/A"
+                
+                total_accounts_sold += 1
+                
+                if order_id not in orders_seen:
+                    orders_seen.add(order_id)
+                    total_sales += price
+                    sales_data.append({
+                        "order_id": order_id,
+                        "date": date_dm,
+                        "category": category,
+                        "revenue": price
+                    })
+                    
+    # Thống kê tổng quan
+    summary = (
+        f"📈 <b>TỔNG QUAN DOANH THU CỬA HÀNG:</b>\n"
+        f"• Tổng đơn hàng: <b>{len(orders_seen)}</b>\n"
+        f"• Tài khoản đã bán: <b>{total_accounts_sold}</b>\n"
+        f"• Tổng doanh thu: <code>{total_sales:,}đ</code>\n\n"
+    )
+    
+    # Xây dựng bảng Pivot (Dịch vụ vs Ngày)
+    categories = sorted(list(set(item["category"] for item in sales_data)))
+    dates = sorted(list(set(item["date"] for item in sales_data)))
+    
+    # Lấy tối đa 4 ngày gần nhất để vừa vặn màn hình Telegram Mobile không bị vỡ dòng
+    if len(dates) > 4:
+        dates = dates[-4:]
+        
+    pivot = {cat: {date: 0 for date in dates} for cat in categories}
+    for item in sales_data:
+        cat = item["category"]
+        dt = item["date"]
+        if dt in pivot[cat]:
+            pivot[cat][dt] += item["revenue"]
+            
+    # Vẽ bảng dạng văn bản đơn cách
+    col_srv_width = 8
+    col_date_width = 9
+    col_total_width = 10
+    
+    def get_border(left, mid, right):
+        border = left + "─" * col_srv_width
+        for _ in dates:
+            border += mid + "─" * col_date_width
+        border += mid + "─" * col_total_width + right
+        return border
+        
+    table_lines = []
+    table_lines.append(get_border("┌", "┬", "┐"))
+    
+    header_str = f"│{'D.Vụ':^{col_srv_width}}"
+    for dt in dates:
+        header_str += f"│{dt:^{col_date_width}}"
+    header_str += f"│{'Tổng phụ':^{col_total_width}}│"
+    table_lines.append(header_str)
+    
+    table_lines.append(get_border("├", "┼", "┤"))
+    
+    col_totals = {dt: 0 for dt in dates}
+    grand_total = 0
+    
+    for cat in categories:
+        cat_disp = cat[:col_srv_width]
+        row_str = f"│{cat_disp:^{col_srv_width}}"
+        row_total = 0
+        for dt in dates:
+            val = pivot[cat][dt]
+            row_total += val
+            col_totals[dt] += val
+            val_str = f"{val//1000}k" if val > 0 else "-"
+            row_str += f"│{val_str:^{col_date_width}}"
+        grand_total += row_total
+        row_total_str = f"{row_total//1000}k" if row_total > 0 else "-"
+        row_str += f"│{row_total_str:^{col_total_width}}│"
+        table_lines.append(row_str)
+        
+    table_lines.append(get_border("├", "┼", "┤"))
+    
+    total_row_str = f"│{'TỔNG':^{col_srv_width}}"
+    for dt in dates:
+        val = col_totals[dt]
+        val_str = f"{val//1000}k" if val > 0 else "-"
+        total_row_str += f"│{val_str:^{col_date_width}}"
+    grand_total_str = f"{grand_total//1000}k" if grand_total > 0 else "-"
+    total_row_str += f"│{grand_total_str:^{col_total_width}}│"
+    table_lines.append(total_row_str)
+    
+    table_lines.append(get_border("└", "┴", "┘"))
+    
+    table_text = "\n".join(table_lines)
+    
+    return summary + "📊 <b>BẢNG PHÂN TÍCH PIVOT (đơn vị: k = 1.000đ):</b>\n<pre>" + table_text + "</pre>"
+
 def get_stock_counts():
     """Tính số lượng tồn kho cho từng loại tài khoản"""
     accounts = read_accounts()
@@ -156,8 +277,10 @@ def make_main_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_shop = KeyboardButton("🛒 Mua tài khoản AI")
     btn_history = KeyboardButton("📁 Lịch sử mua hàng")
+    btn_stats = KeyboardButton("📊 Thống kê doanh số")
     btn_help = KeyboardButton("ℹ️ Trợ giúp")
-    markup.add(btn_shop, btn_history, btn_help)
+    markup.add(btn_shop, btn_history)
+    markup.add(btn_stats, btn_help)
     return markup
 
 @bot.message_handler(commands=['start', 'help'])
@@ -178,6 +301,11 @@ def send_welcome(message):
 def handle_menu(message):
     text = message.text
     chat_id = message.chat.id
+
+    if text == "📊 Thống kê doanh số":
+        stats_text = get_pivot_analysis_text()
+        bot.send_message(chat_id, stats_text, parse_mode="HTML")
+        return
 
     if text == "🛒 Mua tài khoản AI":
         stock = get_stock_counts()
