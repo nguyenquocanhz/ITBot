@@ -254,11 +254,15 @@ def main():
     clear_screen()
     draw_header()
     print(" 🛡️  HỆ THỐNG YÊU CẦU XÁC THỰC MẬT KHẨU")
-    passwd = input("   👉 Nhập mật khẩu quản trị: ").strip()
-    if passwd != PASSWORD:
-        print(COLOR_RED + "\n   ❌ Sai mật khẩu. Chương trình kết thúc." + COLOR_RESET)
-        time.sleep(1.5)
-        return
+    
+    attempts = 0
+    while True:
+        passwd = input("   👉 Nhập mật khẩu quản trị: ").strip()
+        if passwd == PASSWORD:
+            break
+        attempts += 1
+        print(COLOR_RED + f"   ❌ Sai mật khẩu! Vui lòng thử lại. (Lần nhập sai: {attempts})" + COLOR_RESET)
+        print()
 
     options = [
         "1. Xem chi tiết kho hàng tài khoản",
